@@ -2,7 +2,7 @@
 
 Beginner-friendly course project for controlling a Unitree Go2 with ArUco markers using OpenCV and Python.
 
-Welcome to learning about using the Unitree line of robots to scan ArUco markers and execute robot functions. My name is Troy Karavias. I am a student at Stony Brook University and have been working with RoboStore, the official Unitree Robotics partner for the United States. This repository is explained and taught through a course on RoboUniversity: https://robouniversity.com.
+Welcome to this course on using Unitree robots with ArUco markers to trigger robot behaviors. My name is Troy Karavias, and I am a student at Stony Brook University working with RoboStore, the official Unitree Robotics partner in the United States. This repository is taught as part of a course on RoboUniversity: https://robouniversity.com.
 
 The repository includes:
 - A simple live marker scanner that triggers Go2 actions.
