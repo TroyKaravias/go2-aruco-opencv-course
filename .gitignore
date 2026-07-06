@@ -1,27 +1,49 @@
-# Python
-venv/
+# Python bytecode and caches
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*$py.class
+
+# Python environments
+venv/
+.venv/
+env/
+ENV/
 .Python
 
-# VS Code
-.vscode/
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
 
-# OS files
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Editor and OS files
+.vscode/
 .DS_Store
 Thumbs.db
+tempCodeRunnerFile.py
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.bak
+
+# Local env files
+.env
+.envrc
 
 # Large video files
 *.mp4
 *.mov
 *.avi
 *.mkv
-
-# Temporary files
-*.tmp
-*.bak
