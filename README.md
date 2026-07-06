@@ -30,6 +30,7 @@ Implemented marker actions (current scripts):
 - `scripts/go2_aruco_scan.py`: live camera marker scan + action trigger with cooldown.
 - `scripts/go2_aruco_autonomous.py`: autonomous patrol + marker confirmation + obstacle avoidance enable.
 - `scripts/go2_obstacle_avoidance_check.py`: utility script to check/enable obstacle avoidance API state.
+- `experimental/go2_aruco_dashboard.py`: experimental web UI with live Go2 camera feed plus a terminal-style command log.
 - `aruco_markers/`: generated marker PNG files.
 - `course_docs/`: step-by-step course modules and notes.
 - `archive_old_scripts/`: earlier backup/experimental scripts.
@@ -110,6 +111,29 @@ Press `q` in the camera window to stop.
 ```bash
 python scripts/go2_obstacle_avoidance_check.py
 ```
+
+### 5) Run the experimental web dashboard (camera + live command terminal)
+
+```bash
+python experimental/go2_aruco_dashboard.py
+```
+
+Then open:
+
+```text
+http://localhost:5000
+```
+
+Optional environment variables:
+- `UNITREE_ROBOT_IP` (default `192.168.8.181`)
+- `GO2_DASHBOARD_HOST` (default `0.0.0.0`)
+- `GO2_DASHBOARD_PORT` (default `5000`)
+
+The dashboard includes:
+- Live Go2 video feed with ArUco marker overlays.
+- Terminal-style log panel showing marker detections and command actions in real time.
+- Standby mode on connect: no robot commands are sent until you click `Start Patrol`.
+- Patrol controls in UI: `Start Patrol` to enable marker actions, `Stop Patrol` to return to standby.
 
 ## Networking and Connection Notes
 
