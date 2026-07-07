@@ -31,9 +31,12 @@ Implemented marker actions (current scripts):
 ## Repository Layout
 
 - `scripts/generate_markers.py`: creates marker images (IDs 0-8) in `aruco_markers/`.
-- `scripts/go2_aruco_scan.py`: live camera marker scan + action trigger with cooldown.
-- `scripts/go2_aruco_autonomous.py`: autonomous patrol + marker confirmation + obstacle avoidance enable.
-- `scripts/go2_obstacle_avoidance_check.py`: utility script to check/enable obstacle avoidance API state.
+- `scripts/generate_printable_marker.py`: creates a print-ready marker sheet for a specific marker ID.
+- `scripts/go2/`: Go2-specific scripts.
+- `scripts/g1/`: G1-specific scripts (for humanoid workflow as scripts are added).
+- `scripts/go2/go2_aruco_scan.py`: live camera marker scan + action trigger with cooldown.
+- `scripts/go2/go2_aruco_autonomous.py`: autonomous patrol + marker confirmation + obstacle avoidance enable.
+- `scripts/go2/go2_obstacle_avoidance_check.py`: utility script to check/enable obstacle avoidance API state.
 - `aruco_markers/`: generated marker PNG files.
 - `course_docs/`: step-by-step course modules and notes.
 - `archive_old_scripts/`: earlier backup/experimental scripts.
@@ -101,7 +104,7 @@ For printing, open the generated HTML file and print with **Scale = 100%** (Actu
 ### 2) Run basic marker scanner
 
 ```bash
-python scripts/go2_aruco_scan.py
+python scripts/go2/go2_aruco_scan.py
 ```
 
 - Opens an OpenCV video window.
@@ -111,7 +114,7 @@ python scripts/go2_aruco_scan.py
 ### 3) Run autonomous patrol mode
 
 ```bash
-python scripts/go2_aruco_autonomous.py
+python scripts/go2/go2_aruco_autonomous.py
 ```
 
 Behavior implemented now:
@@ -125,7 +128,7 @@ Press `q` in the camera window to stop.
 ### 4) Check obstacle avoidance API status only
 
 ```bash
-python scripts/go2_obstacle_avoidance_check.py
+python scripts/go2/go2_obstacle_avoidance_check.py
 ```
 
 ## Networking and Connection Notes
