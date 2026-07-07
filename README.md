@@ -1,4 +1,4 @@
-# go2-aruco-opencv-course
+# unitree-robotics-aruco-opencv
 
 Beginner-friendly course project for controlling a Unitree Go2 with ArUco markers using OpenCV and Python.
 
