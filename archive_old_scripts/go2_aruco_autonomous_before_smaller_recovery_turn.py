@@ -62,19 +62,16 @@ BLOCK_CHECK_GRACE_TIME = 1.0
 # Normal recovery
 RECOVERY_STOP_TIME = 0.35
 RECOVERY_BACKUP_TIME = 2.0
-RECOVERY_TURN_TIME = 3.0
+RECOVERY_TURN_TIME = 4.2
 RECOVERY_SCAN_TIME = 0.8
 
 RECOVERY_BACKUP_SPEED = -0.34
 RECOVERY_TURN_SPEED = 0.385
 
-# Emergency recovery if the robot gets stuck again soon after recovery.
-# Important:
-# The second recovery backs up farther, but turns LESS.
-# A smaller opposite turn helps avoid swinging back into the same corner.
+# Emergency recovery if the robot gets stuck again soon after recovery
 RECOVERY_REPEAT_WINDOW = 8.0
 EMERGENCY_BACKUP_TIME = 2.8
-EMERGENCY_TURN_TIME = 2.2
+EMERGENCY_TURN_TIME = 5.5
 EMERGENCY_BACKUP_SPEED = -0.38
 EMERGENCY_TURN_SPEED = 0.455
 
@@ -83,7 +80,6 @@ blocked_since = None
 last_gray_frame = None
 last_recovery_time = 0.0
 recovery_is_emergency = False
-recovery_turn_direction = 1
 
 # Wireless controller topic settings.
 # For this topic:
@@ -218,28 +214,15 @@ async def start_recovery(conn, now):
     """
     Starts normal or emergency recovery depending on whether the robot
     got stuck again shortly after a previous recovery.
-
-    Normal recovery:
-    - backs up
-    - turns a little more than 90 degrees
-
-    Emergency recovery:
-    - backs up farther
-    - turns less
-    - turns in the opposite direction from the previous recovery
     """
     global patrol_state, patrol_state_start
     global blocked_since, last_recovery_time, recovery_is_emergency
-    global recovery_turn_direction
 
     if now - last_recovery_time <= RECOVERY_REPEAT_WINDOW:
         recovery_is_emergency = True
-        recovery_turn_direction *= -1
         print("Blocked again soon after recovery. Using EMERGENCY recovery.")
-        print("Emergency recovery will back up farther and use a smaller opposite turn.")
     else:
         recovery_is_emergency = False
-        recovery_turn_direction = patrol_turn_direction
         print("Forward movement appears blocked. Starting normal recovery.")
 
     last_recovery_time = now
@@ -396,7 +379,7 @@ async def search_motion(conn, current_frame=None):
             conn.datachannel.pub_sub,
             lx=0.0,
             ly=0.0,
-            rx=turn_speed * recovery_turn_direction,
+            rx=turn_speed,
         )
 
         if elapsed >= turn_time:
