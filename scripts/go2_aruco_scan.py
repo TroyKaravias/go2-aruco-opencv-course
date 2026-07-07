@@ -56,6 +56,22 @@ async def handle_marker(conn, marker_id):
         await asyncio.sleep(1.0)
         await send_sport_command(conn, SPORT_CMD["StopMove"])
 
+    elif marker_id == 5:
+        print("Marker 5 scanned: sending Stretch")
+        await send_sport_command(conn, SPORT_CMD["Stretch"])
+
+    elif marker_id == 6:
+        print("Marker 6 scanned: sending Shake Hands (Content gesture)")
+        await send_sport_command(conn, SPORT_CMD["Content"])
+
+    elif marker_id == 7:
+        print("Marker 7 scanned: sending Greet (Hello)")
+        await send_sport_command(conn, SPORT_CMD["Hello"])
+
+    elif marker_id == 8:
+        print("Marker 8 scanned: sending Dance 1")
+        await send_sport_command(conn, SPORT_CMD["Dance1"])
+
     else:
         print(f"Marker {marker_id} scanned: no action assigned")
 

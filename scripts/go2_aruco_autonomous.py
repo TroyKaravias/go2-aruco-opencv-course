@@ -469,6 +469,10 @@ async def handle_marker(conn, marker_id):
     Marker 2: Sit
     Marker 3: Move forward briefly, then stop
     Marker 4: Turn/search behavior
+    Marker 5: Stretch
+    Marker 6: Shake hands (mapped to Content gesture)
+    Marker 7: Greet (Hello gesture)
+    Marker 8: Dance 1
     """
 
     now = time.time()
@@ -511,6 +515,22 @@ async def handle_marker(conn, marker_id):
             )
             await asyncio.sleep(PUBLISH_INTERVAL)
         await stop_robot(conn)
+
+    elif marker_id == 5:
+        print("Marker 5 action: Stretch")
+        await send_sport_command(conn, SPORT_CMD["Stretch"])
+
+    elif marker_id == 6:
+        print("Marker 6 action: Shake hands (Content gesture)")
+        await send_sport_command(conn, SPORT_CMD["Content"])
+
+    elif marker_id == 7:
+        print("Marker 7 action: Greet (Hello)")
+        await send_sport_command(conn, SPORT_CMD["Hello"])
+
+    elif marker_id == 8:
+        print("Marker 8 action: Dance 1")
+        await send_sport_command(conn, SPORT_CMD["Dance1"])
 
     else:
         print(f"No action assigned for marker {marker_id}")

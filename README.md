@@ -23,10 +23,14 @@ Implemented marker actions (current scripts):
 | 2 | Sit |
 | 3 | Short forward move |
 | 4 | Short turn/search move |
+| 5 | Stretch |
+| 6 | Shake hands |
+| 7 | Greet |
+| 8 | Dance 1 |
 
 ## Repository Layout
 
-- `scripts/generate_markers.py`: creates marker images (IDs 0-4) in `aruco_markers/`.
+- `scripts/generate_markers.py`: creates marker images (IDs 0-8) in `aruco_markers/`.
 - `scripts/go2_aruco_scan.py`: live camera marker scan + action trigger with cooldown.
 - `scripts/go2_aruco_autonomous.py`: autonomous patrol + marker confirmation + obstacle avoidance enable.
 - `scripts/go2_obstacle_avoidance_check.py`: utility script to check/enable obstacle avoidance API state.
@@ -80,6 +84,19 @@ python scripts/generate_markers.py
 ```
 
 This writes marker images to `aruco_markers/`.
+
+### 1b) Generate a single print-ready 5.5 x 5.5 inch marker
+
+```bash
+python scripts/generate_printable_marker.py --id 5 --size-in 5.5 --dpi 300
+```
+
+This writes files to `aruco_markers/printables/`:
+- PNG at the requested physical size and DPI.
+- Matching HTML print sheet with page size locked to 5.5 in x 5.5 in.
+- Letter-size HTML print sheet (8.5 x 11) with marker centered at 5.5 in x 5.5 in.
+
+For printing, open the generated HTML file and print with **Scale = 100%** (Actual Size).
 
 ### 2) Run basic marker scanner
 
