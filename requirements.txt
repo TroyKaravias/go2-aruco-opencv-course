@@ -2,3 +2,4 @@ opencv-contrib-python
 numpy
 aiortc
 unitree-webrtc-connect
+websockets

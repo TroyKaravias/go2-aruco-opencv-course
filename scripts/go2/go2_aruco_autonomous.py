@@ -19,6 +19,19 @@ STREAM_PORT = int(os.environ.get("STREAM_PORT", "8080"))
 _stop_requested = threading.Event()
 _start_requested = threading.Event()
 
+# ── Physical controller keybinds ──────────────────────────────────────────────
+# Unitree Go2 wireless remote key bitmask values.
+# Hold D-pad Down + A  to START autonomous patrol.
+# Hold D-pad Down + B  to STOP  autonomous patrol.
+# If your buttons don't respond, uncomment the debug print inside
+# _setup_controller_keybind() to discover the correct bitmask values.
+_CTRL_KEY_A         = 256    # A button
+_CTRL_KEY_B         = 512    # B button
+_CTRL_KEY_DPAD_DOWN = 16384  # D-pad Down
+_CTRL_COMBO_START   = _CTRL_KEY_DPAD_DOWN | _CTRL_KEY_A  # 16640 → Start patrol
+_CTRL_COMBO_STOP    = _CTRL_KEY_DPAD_DOWN | _CTRL_KEY_B  # 16896 → Stop  patrol
+_ctrl_last_keys = 0
+
 _HTML_PAGE = b"""<!doctype html>
 <html>
 <head>
@@ -133,7 +146,7 @@ def _start_mjpeg_server(port):
 # ──────────────────────────────────────────────────────────────────────────────
 
 from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection
-from unitree_webrtc_connect.constants import RTC_TOPIC, OBSTACLES_AVOID_API, SPORT_CMD
+from unitree_webrtc_connect.constants import RTC_TOPIC, OBSTACLES_AVOID_API, SPORT_CMD, VUI_COLOR
 
 logging.basicConfig(level=logging.FATAL)
 
@@ -327,6 +340,24 @@ async def stop_robot(conn):
     # Publish zero wireless-controller values to stop autonomous movement.
     # Do NOT send StopMove — that sport command locks out the physical controller.
     publish_wireless_controller(conn.datachannel.pub_sub, 0.0, 0.0, 0.0)
+
+
+async def set_led_color(conn, color, duration=0):
+    """
+    Set the Go2 front LED color.
+    duration=0 holds the color indefinitely.
+    Colors: VUI_COLOR.WHITE / RED / YELLOW / BLUE / GREEN / CYAN / PURPLE
+    """
+    try:
+        await conn.datachannel.pub_sub.publish_request_new(
+            RTC_TOPIC["VUI"],
+            {
+                "api_id": 1007,
+                "parameter": {"color": color, "time": duration},
+            },
+        )
+    except Exception:
+        pass  # LED is cosmetic — never crash over it
 
 
 def get_visual_motion_score(img):
@@ -782,6 +813,7 @@ async def video_loop(conn):
                 patrol_state_start = time.time()
                 blocked_since = None
                 print("Patrol started.")
+                await set_led_color(conn, VUI_COLOR.YELLOW)
             _prev_patrol_active = patrol_active
 
             if patrol_active and not marker_detected_this_frame:
@@ -790,6 +822,7 @@ async def video_loop(conn):
                 # Only send stop once on transition to standby, not every frame.
                 # Sending StopMove every frame overrides the physical controller.
                 await stop_robot(conn)
+                await set_led_color(conn, VUI_COLOR.GREEN)
 
             if HEADLESS and not _start_requested.is_set():
                 status_text = "STANDBY | Open browser and press Start"
@@ -826,23 +859,106 @@ async def video_loop(conn):
             cv2.destroyAllWindows()
 
 
+def _setup_controller_keybind(conn):
+    """
+    Monitors /wirelesscontroller via the robot's rosbridge WebSocket
+    (ws://localhost:9090) to detect physical controller button combos.
+
+    D-pad Down + A  → Start autonomous patrol
+    D-pad Down + B  → Stop  autonomous patrol
+
+    The /wirelesscontroller ROS2 topic carries lx/ly/rx/ry/keys where
+    keys is the same uint16 bitmask as the Unitree SDK WirelessController.
+    Uncomment the debug line below to discover bitmask values for any button.
+    """
+    import websockets as _ws
+
+    async def _controller_loop():
+        global _ctrl_last_keys
+        uri = "ws://localhost:9090"
+        while True:
+            try:
+                async with _ws.connect(uri, open_timeout=5) as ws:
+                    await ws.send(json.dumps({
+                        "op": "subscribe",
+                        "topic": "/wirelesscontroller",
+                        "id": "patrol_ctrl_sub",
+                    }))
+                    print("[Controller] Rosbridge connected — watching /wirelesscontroller")
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        if msg.get("op") != "publish":
+                            continue
+                        keys = int(msg.get("msg", {}).get("keys", 0))
+
+                        # Uncomment to discover bitmask values for any button:
+                        # if keys: print(f"[Controller] keys=0x{keys:04x} ({keys})")
+
+                        prev = _ctrl_last_keys
+                        _ctrl_last_keys = keys
+
+                        prev_start = (prev & _CTRL_COMBO_START) == _CTRL_COMBO_START
+                        curr_start = (keys & _CTRL_COMBO_START) == _CTRL_COMBO_START
+                        if curr_start and not prev_start:
+                            print("[Controller] D-pad Down + A → Start Patrol")
+                            _stop_requested.clear()
+                            _start_requested.set()
+                            asyncio.get_event_loop().create_task(
+                                set_led_color(conn, VUI_COLOR.YELLOW)
+                            )
+
+                        prev_stop = (prev & _CTRL_COMBO_STOP) == _CTRL_COMBO_STOP
+                        curr_stop = (keys & _CTRL_COMBO_STOP) == _CTRL_COMBO_STOP
+                        if curr_stop and not prev_stop:
+                            print("[Controller] D-pad Down + B → Stop Patrol")
+                            _stop_requested.set()
+                            asyncio.get_event_loop().create_task(
+                                set_led_color(conn, VUI_COLOR.GREEN)
+                            )
+
+            except Exception as e:
+                print(f"[Controller] Rosbridge error: {e} — retrying in 3s...")
+                await asyncio.sleep(3)
+
+    asyncio.get_event_loop().create_task(_controller_loop())
+    print("Physical controller keybind active  —  D-pad Down+A = Start, D-pad Down+B = Stop")
+
+
 async def main():
     print_course_header()
 
     if HEADLESS:
         _start_mjpeg_server(STREAM_PORT)
-        print(f"MJPEG stream started on http://192.168.123.170:{STREAM_PORT}\n")
+        print(f"MJPEG stream  —  hotspot:  http://192.168.12.1:{STREAM_PORT}")
+        print(f"               ethernet: http://192.168.123.170:{STREAM_PORT}\n")
 
-    if _run_on_robot:
-        print("Connecting to Go2 via LocalAP (running on robot)...")
-        conn = UnitreeWebRTCConnection(_CONNECTION_METHOD)
-    else:
-        print(f"Connecting to Go2 at {ROBOT_IP}...")
-        conn = UnitreeWebRTCConnection(_CONNECTION_METHOD, ip=ROBOT_IP)
-    await conn.connect()
-    print("Connected.\n")
+    # Retry loop — on boot the robot's signaling service may not be ready yet.
+    # Keep retrying every 10 seconds until the connection succeeds.
+    conn = None
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            if _run_on_robot:
+                print(f"Connecting to Go2 via LocalAP (attempt {attempt})...")
+                conn = UnitreeWebRTCConnection(_CONNECTION_METHOD)
+            else:
+                print(f"Connecting to Go2 at {ROBOT_IP} (attempt {attempt})...")
+                conn = UnitreeWebRTCConnection(_CONNECTION_METHOD, ip=ROBOT_IP)
+            await conn.connect()
+            print("Connected.\n")
+            break
+        except Exception as e:
+            print(f"Connection failed: {e}")
+            print("Robot signaling not ready yet — retrying in 10s...")
+            await asyncio.sleep(10)
+
+    _setup_controller_keybind(conn)
 
     await enable_builtin_obstacle_avoidance(conn)
+
+    # Set LED to green (normal Go2 running color) to indicate standby
+    await set_led_color(conn, VUI_COLOR.GREEN)
 
     # Make sure robot is stopped before autonomy starts
     await stop_robot(conn)
