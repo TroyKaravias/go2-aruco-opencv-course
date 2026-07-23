@@ -47,7 +47,7 @@ _HTML_PAGE = b"""<!doctype html>
   <div id="bar">
     <button id="startBtn" onclick="startPatrol()">Start Patrol</button>
     <button id="stopBtn"  onclick="stopPatrol()" disabled>Stop Patrol</button>
-    <span id="status">Standby \u2014 press Start to begin</span>
+    <span id="status">Standby &#8212; press Start to begin</span>
   </div>
   <script>
     function startPatrol() {
@@ -80,7 +80,7 @@ def _set_mjpeg_frame(img, quality=60):
 
 
 class _MJPEGHandler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
+    def log_message(self, format, *args):
         pass  # suppress request logs
 
     def do_GET(self):
