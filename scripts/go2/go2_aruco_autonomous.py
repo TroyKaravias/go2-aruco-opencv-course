@@ -3,13 +3,136 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from queue import Queue
 
 import cv2
 import numpy as np
 
-from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+# ── MJPEG stream (headless mode) ──────────────────────────────────────────────
+_mjpeg_frame = None
+_mjpeg_lock = threading.Lock()
+STREAM_PORT = int(os.environ.get("STREAM_PORT", "8080"))
+_stop_requested = threading.Event()
+_start_requested = threading.Event()
+
+_HTML_PAGE = b"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Go2 Patrol</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; }
+    #feed { flex: 1; object-fit: contain; width: 100%; }
+    #bar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 14px; background: #111; border-top: 1px solid #333;
+    }
+    button {
+      border: none; border-radius: 6px; padding: 8px 20px;
+      font-size: 15px; font-weight: bold; cursor: pointer; color: #fff;
+    }
+    #startBtn { background: #2ea043; }
+    #stopBtn  { background: #da3633; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #status { color: #aaa; font-family: monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <img id="feed" src="/stream">
+  <div id="bar">
+    <button id="startBtn" onclick="startPatrol()">Start Patrol</button>
+    <button id="stopBtn"  onclick="stopPatrol()" disabled>Stop Patrol</button>
+    <span id="status">Standby \u2014 press Start to begin</span>
+  </div>
+  <script>
+    function startPatrol() {
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('stopBtn').disabled = false;
+      document.getElementById('status').textContent = 'Patrol running...';
+      fetch('/start');
+    }
+    function stopPatrol() {
+      document.getElementById('stopBtn').disabled = true;
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('status').textContent = 'Stopping...';
+      fetch('/stop').then(() => {
+        document.getElementById('status').textContent = 'Stopped.';
+      }).catch(() => {
+        document.getElementById('status').textContent = 'Stop sent.';
+      });
+    }
+  </script>
+</body>
+</html>"""
+
+
+def _set_mjpeg_frame(img, quality=60):
+    global _mjpeg_frame
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if ok:
+        with _mjpeg_lock:
+            _mjpeg_frame = buf.tobytes()
+
+
+class _MJPEGHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass  # suppress request logs
+
+    def do_GET(self):
+        if self.path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(_HTML_PAGE)
+        elif self.path == "/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.end_headers()
+            try:
+                while True:
+                    with _mjpeg_lock:
+                        frame = _mjpeg_frame
+                    if frame:
+                        self.wfile.write(
+                            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                            + frame + b"\r\n"
+                        )
+                    time.sleep(0.05)
+            except Exception:
+                pass
+        elif self.path == "/start":
+            _stop_requested.clear()
+            _start_requested.set()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"started")
+        elif self.path == "/stop":
+            _stop_requested.set()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"stopping")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+def _start_mjpeg_server(port):
+    class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+    server = _ThreadedHTTPServer(("0.0.0.0", port), _MJPEGHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return server
+# ──────────────────────────────────────────────────────────────────────────────
+
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection
 from unitree_webrtc_connect.constants import RTC_TOPIC, OBSTACLES_AVOID_API, SPORT_CMD
 
 logging.basicConfig(level=logging.FATAL)
@@ -19,8 +142,30 @@ logging.basicConfig(level=logging.FATAL)
 # Autonomous ArUco Search with Built-In Go2 Obstacle Avoidance
 # ============================================================
 
-# Use the same Go2 IP that has been working for your ArUco project.
+# When running ON the robot via SSH, leave UNITREE_ROBOT_IP unset and
+# RUN_ON_ROBOT=1 will be detected automatically (no DISPLAY available).
+# When running from a laptop on the same network, set UNITREE_ROBOT_IP.
 ROBOT_IP = os.environ.get("UNITREE_ROBOT_IP", "192.168.12.1")
+
+# Headless mode: automatically true when there is no DISPLAY (e.g. SSH on robot).
+# Override with HEADLESS=1 or HEADLESS=0.
+_headless_env = os.environ.get("HEADLESS", "")
+if _headless_env == "1":
+    HEADLESS = True
+elif _headless_env == "0":
+    HEADLESS = False
+else:
+    HEADLESS = not bool(os.environ.get("DISPLAY", ""))
+
+# Connection method: LocalAP when running on the robot (no UNITREE_ROBOT_IP set
+# and headless), LocalSTA when connecting from a laptop on the same network.
+_run_on_robot = HEADLESS and not os.environ.get("UNITREE_ROBOT_IP", "")
+if _run_on_robot:
+    from unitree_webrtc_connect.constants import WebRTCConnectionMethod as _WCM
+    _CONNECTION_METHOD = _WCM.LocalAP
+else:
+    from unitree_webrtc_connect.constants import WebRTCConnectionMethod as _WCM
+    _CONNECTION_METHOD = _WCM.LocalSTA
 
 # ArUco setup
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -97,8 +242,11 @@ def print_course_header():
     print("\n============================================================")
     print("Go2 Autonomous ArUco Patrol")
     print("Built-in Go2 obstacle avoidance will be enabled first.")
-    print("Press q in the camera window to stop.")
-    print("CTRL+C also stops the script.")
+    if HEADLESS:
+        print("Running HEADLESS (no display). Press CTRL+C to stop.")
+    else:
+        print("Press q in the camera window to stop.")
+        print("CTRL+C also stops the script.")
     print("============================================================\n")
 
 
@@ -176,17 +324,9 @@ def publish_wireless_controller(pub_sub, lx=0.0, ly=0.0, rx=0.0, ry=0.0, keys=0)
 
 
 async def stop_robot(conn):
-    # Stop wireless-controller movement
+    # Publish zero wireless-controller values to stop autonomous movement.
+    # Do NOT send StopMove — that sport command locks out the physical controller.
     publish_wireless_controller(conn.datachannel.pub_sub, 0.0, 0.0, 0.0)
-
-    # Also send sport StopMove as a second safety stop
-    try:
-        await conn.datachannel.pub_sub.publish_request_new(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["StopMove"]},
-        )
-    except Exception:
-        pass
 
 
 def get_visual_motion_score(img):
@@ -572,6 +712,8 @@ async def video_loop(conn):
 
     print("Camera callback added. Waiting for frames...\n")
 
+    _prev_patrol_active = False  # track transitions so we can reset state on Start
+
     try:
         while True:
             if frame_queue.empty():
@@ -621,38 +763,82 @@ async def video_loop(conn):
             else:
                 marker_seen_count.clear()
 
-            if not marker_detected_this_frame:
+            # Headless: check start/stop state from browser buttons.
+            # Non-headless: patrol runs immediately (use q to quit).
+            if HEADLESS:
+                patrol_active = _start_requested.is_set() and not _stop_requested.is_set()
+            else:
+                patrol_active = True
+
+            # Detect transitions before updating _prev_patrol_active.
+            _transitioning_to_active = patrol_active and not _prev_patrol_active
+            _transitioning_to_standby = not patrol_active and _prev_patrol_active
+
+            # Reset patrol state machine the moment Start is clicked so elapsed
+            # time doesn't instantly skip through all the patrol states.
+            if _transitioning_to_active:
+                global patrol_state, patrol_state_start, blocked_since
+                patrol_state = "FORWARD"
+                patrol_state_start = time.time()
+                blocked_since = None
+                print("Patrol started.")
+            _prev_patrol_active = patrol_active
+
+            if patrol_active and not marker_detected_this_frame:
                 await search_motion(conn, img)
+            elif _transitioning_to_standby and not marker_detected_this_frame:
+                # Only send stop once on transition to standby, not every frame.
+                # Sending StopMove every frame overrides the physical controller.
+                await stop_robot(conn)
+
+            if HEADLESS and not _start_requested.is_set():
+                status_text = "STANDBY | Open browser and press Start"
+            elif HEADLESS and _stop_requested.is_set():
+                status_text = "STOPPED"
+            else:
+                status_text = f"AUTO PATROL | State: {patrol_state}"
 
             cv2.putText(
                 img,
-                f"AUTO PATROL | State: {patrol_state} | q = quit",
+                status_text,
                 (20, img.shape[0] - 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (255, 255, 255),
+                (0, 255, 0) if patrol_active else (0, 165, 255),
                 2,
             )
 
-            cv2.imshow("Go2 Autonomous ArUco Patrol", img)
+            if HEADLESS:
+                _set_mjpeg_frame(img)
+            else:
+                cv2.imshow("Go2 Autonomous ArUco Patrol", img)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                print("q pressed. Stopping robot and exiting.")
-                break
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    print("q pressed. Stopping robot and exiting.")
+                    break
 
             await asyncio.sleep(0.001)
 
     finally:
         await stop_robot(conn)
-        cv2.destroyAllWindows()
+        if not HEADLESS:
+            cv2.destroyAllWindows()
 
 
 async def main():
     print_course_header()
 
-    print(f"Connecting to Go2 at {ROBOT_IP}...")
-    conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ROBOT_IP)
+    if HEADLESS:
+        _start_mjpeg_server(STREAM_PORT)
+        print(f"MJPEG stream started on http://192.168.123.170:{STREAM_PORT}\n")
+
+    if _run_on_robot:
+        print("Connecting to Go2 via LocalAP (running on robot)...")
+        conn = UnitreeWebRTCConnection(_CONNECTION_METHOD)
+    else:
+        print(f"Connecting to Go2 at {ROBOT_IP}...")
+        conn = UnitreeWebRTCConnection(_CONNECTION_METHOD, ip=ROBOT_IP)
     await conn.connect()
     print("Connected.\n")
 
@@ -671,8 +857,9 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCTRL+C pressed. Exiting.")
-        try:
-            cv2.destroyAllWindows()
-        except Exception:
-            pass
+        if not HEADLESS:
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
         sys.exit(0)

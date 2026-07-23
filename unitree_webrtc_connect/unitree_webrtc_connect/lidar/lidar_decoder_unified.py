@@ -1,5 +1,11 @@
-from .lidar_decoder_libvoxel import LidarDecoder as LibVoxelDecoder
-from .lidar_decoder_native import LidarDecoder as NativeDecoder
+try:
+    from .lidar_decoder_libvoxel import LidarDecoder as LibVoxelDecoder
+except Exception:
+    LibVoxelDecoder = None
+try:
+    from .lidar_decoder_native import LidarDecoder as NativeDecoder
+except Exception:
+    NativeDecoder = None
 
 
 class UnifiedLidarDecoder:
@@ -11,11 +17,19 @@ class UnifiedLidarDecoder:
                              Defaults to "libvoxel".
         """
         if decoder_type == "libvoxel":
-            self.decoder = LibVoxelDecoder()
-            self.decoder_name = "LibVoxelDecoder"
+            try:
+                self.decoder = LibVoxelDecoder()
+                self.decoder_name = "LibVoxelDecoder"
+            except Exception:
+                self.decoder = None
+                self.decoder_name = "unavailable"
         elif decoder_type == "native":
-            self.decoder = NativeDecoder()
-            self.decoder_name = "NativeDecoder"
+            try:
+                self.decoder = NativeDecoder()
+                self.decoder_name = "NativeDecoder"
+            except Exception:
+                self.decoder = None
+                self.decoder_name = "unavailable"
         else:
             raise ValueError("Invalid decoder type. Choose 'libvoxel' or 'native'.")
 

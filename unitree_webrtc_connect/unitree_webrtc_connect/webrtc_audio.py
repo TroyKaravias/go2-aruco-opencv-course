@@ -1,7 +1,13 @@
 
-from aiortc import AudioStreamTrack, RTCRtpSender
-import logging
-import sounddevice as sd
+try:
+    from aiortc import AudioStreamTrack, RTCRtpSender
+except ImportError:
+    AudioStreamTrack = None
+    RTCRtpSender = None
+try:
+    import sounddevice as sd
+except ImportError:
+    sd = None
 import numpy as np
 import wave
 

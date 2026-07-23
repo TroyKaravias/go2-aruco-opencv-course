@@ -22,7 +22,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
-from curl_cffi import requests as cffi_requests
+try:
+    from curl_cffi import requests as cffi_requests
+except ImportError:
+    cffi_requests = None  # curl_cffi unavailable; Remote connection method will not work
 
 
 # ─── Constants ────────────────────────────────────────────────────────

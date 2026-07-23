@@ -24,12 +24,17 @@ import ctypes
 import numpy as np
 import os
 
-from wasmtime import Config, Engine, Store, Module, Instance, Func, FuncType
-from wasmtime import ValType
+try:
+    from wasmtime import Config, Engine, Store, Module, Instance, Func, FuncType
+    from wasmtime import ValType
+except ImportError:
+    Config = Engine = Store = Module = Instance = Func = FuncType = ValType = None
 
 
 class LidarDecoder:
     def __init__(self) -> None:
+        if Config is None:
+            raise ImportError("wasmtime is not installed; LibVoxelDecoder is unavailable")
 
         config = Config()
         config.wasm_multi_value = True
