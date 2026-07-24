@@ -210,6 +210,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
 def _start_mjpeg_server(port):
     class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
+        allow_reuse_address = True
     server = _ThreadedHTTPServer(("0.0.0.0", port), _MJPEGHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
