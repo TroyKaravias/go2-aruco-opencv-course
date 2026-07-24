@@ -18,6 +18,7 @@ _mjpeg_lock = threading.Lock()
 STREAM_PORT = int(os.environ.get("STREAM_PORT", "8080"))
 _stop_requested = threading.Event()
 _start_requested = threading.Event()
+_log_queue: "Queue[str]" = Queue(maxsize=200)
 
 # ── Physical controller keybinds ──────────────────────────────────────────────
 # Unitree Go2 wireless remote key bitmask values.
@@ -39,7 +40,7 @@ _HTML_PAGE = b"""<!doctype html>
   <title>Go2 Patrol</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; }
+    body { background: #000; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; position: relative; }
     #feed { flex: 1; object-fit: contain; width: 100%; }
     #bar {
       display: flex; align-items: center; gap: 12px;
@@ -53,32 +54,77 @@ _HTML_PAGE = b"""<!doctype html>
     #stopBtn  { background: #da3633; }
     button:disabled { opacity: 0.4; cursor: default; }
     #status { color: #aaa; font-family: monospace; font-size: 13px; }
+    #logPanel {
+      position: absolute; top: 10px; right: 10px;
+      width: 520px; max-height: 520px;
+      background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 8px;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #logTitle {
+      padding: 5px 10px; font-size: 11px; font-weight: bold;
+      color: #7eb8f7; background: rgba(0,0,0,0.5); border-bottom: 1px solid #333;
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    #logLines {
+      flex: 1; overflow-y: auto; padding: 6px 8px;
+      font-family: monospace; font-size: 12px; color: #cce; line-height: 1.6;
+    }
+    #logLines div { border-bottom: 1px solid #1a1a2a; padding: 1px 0; }
+    #logLines div.confirmed { color: #5de88a; font-weight: bold; }
+    #logLines div.seen { color: #aad4ff; }
+    #logLines div.action { color: #f0c060; }
+    #logLines div.info { color: #7eb8f7; }
   </style>
 </head>
 <body>
   <img id="feed" src="/stream">
+  <div id="logPanel">
+    <div id="logTitle">&#128269; ArUco Scan Log</div>
+    <div id="logLines"><div class="info">Waiting for detections...</div></div>
+  </div>
   <div id="bar">
     <button id="startBtn" onclick="startPatrol()">Start Patrol</button>
     <button id="stopBtn"  onclick="stopPatrol()" disabled>Stop Patrol</button>
     <span id="status">Standby &#8212; press Start to begin</span>
   </div>
   <script>
-    function startPatrol() {
-      document.getElementById('startBtn').disabled = true;
-      document.getElementById('stopBtn').disabled = false;
-      document.getElementById('status').textContent = 'Patrol running...';
-      fetch('/start');
+    function startPatrol() { fetch('/start'); }
+    function stopPatrol()  { fetch('/stop');  }
+    function poll() {
+      fetch('/state').then(r => r.json()).then(s => {
+        var start = document.getElementById('startBtn');
+        var stop  = document.getElementById('stopBtn');
+        var status = document.getElementById('status');
+        if (s.running) {
+          start.disabled = true;
+          stop.disabled  = false;
+          status.textContent = 'Patrol running...';
+        } else {
+          start.disabled = false;
+          stop.disabled  = true;
+          status.textContent = 'Standby \u2014 press Start to begin';
+        }
+      }).catch(() => {});
     }
-    function stopPatrol() {
-      document.getElementById('stopBtn').disabled = true;
-      document.getElementById('startBtn').disabled = true;
-      document.getElementById('status').textContent = 'Stopping...';
-      fetch('/stop').then(() => {
-        document.getElementById('status').textContent = 'Stopped.';
-      }).catch(() => {
-        document.getElementById('status').textContent = 'Stop sent.';
-      });
-    }
+    setInterval(poll, 1000);
+    poll();
+
+    var logBox = document.getElementById('logLines');
+    var MAX_LINES = 60;
+    var es = new EventSource('/log');
+    es.onmessage = function(e) {
+      var parts = e.data.split('|', 2);
+      var cls = parts.length > 1 ? parts[0] : 'info';
+      var msg = parts.length > 1 ? parts[1] : parts[0];
+      var d = document.createElement('div');
+      d.className = cls;
+      var now = new Date();
+      var ts = now.toTimeString().slice(0,8);
+      d.textContent = ts + '  ' + msg;
+      logBox.appendChild(d);
+      while (logBox.children.length > MAX_LINES) logBox.removeChild(logBox.firstChild);
+      logBox.scrollTop = logBox.scrollHeight;
+    };
   </script>
 </body>
 </html>"""
@@ -131,6 +177,31 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"stopping")
+        elif self.path == "/state":
+            import json as _json
+            running = _start_requested.is_set() and not _stop_requested.is_set()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(_json.dumps({"running": running}).encode())
+        elif self.path == "/log":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            try:
+                while True:
+                    try:
+                        msg = _log_queue.get(timeout=15)
+                        self.wfile.write(f"data: {msg}\n\n".encode())
+                        self.wfile.flush()
+                    except Exception:
+                        # keepalive comment
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+            except Exception:
+                pass
         else:
             self.send_response(404)
             self.end_headers()
@@ -653,7 +724,13 @@ async def handle_marker(conn, marker_id):
 
     last_seen[marker_id] = now
 
+    _MARKER_LABELS = {
+        0: "Stop", 1: "StandUp", 2: "Sit", 3: "Forward burst",
+        4: "Turn/search", 5: "Stretch", 6: "Shake hands", 7: "Greet", 8: "Dance",
+    }
+    label = _MARKER_LABELS.get(marker_id, f"ID {marker_id}")
     print(f"\nConfirmed ArUco marker ID: {marker_id}")
+    _log_queue.put(f"action|\u25b6 ID {marker_id}: {label}")
     print("Stopping before marker action...")
     await stop_robot(conn)
     await asyncio.sleep(0.3)
@@ -762,6 +839,7 @@ async def video_loop(conn):
 
                 visible_ids = ids.flatten().tolist()
                 print(f"Visible ArUco IDs: {visible_ids}")
+                _log_queue.put(f"seen|Visible: {visible_ids}")
 
                 # Stop immediately when a marker is visible so the camera
                 # has time to confirm and scan it instead of passing by.
@@ -784,6 +862,7 @@ async def video_loop(conn):
 
                     if marker_seen_count[marker_id] >= MARKER_CONFIRMATION_COUNT:
                         marker_seen_count[marker_id] = 0
+                        _log_queue.put(f"confirmed|Confirmed ID {marker_id}")
                         await handle_marker(conn, marker_id)
 
                 # Reset counts for markers no longer visible
